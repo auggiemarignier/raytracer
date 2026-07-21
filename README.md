@@ -5,6 +5,7 @@ Pure NumPy implementation for ray tracing through spherical composite geometries
 ## Features
 
 - **Geometric regions**: Create spherical shells, hemispheres, and solid balls
+- **Spherical mesh**: Trace distances through a full-sphere radial + angular mesh
 - **Composite geometries**: Combine multiple regions (e.g., core + shell)
 - **Ray tracing**: Calculate distance travelled through each region
 - **Batch operations**: Trace multiple rays simultaneously
@@ -13,7 +14,7 @@ Pure NumPy implementation for ray tracing through spherical composite geometries
 
 ```python
 import numpy as np
-from raytracer import SphericalShell, Ball, CompositeRegion, Ray
+from raytracer import SphericalShell, Ball, CompositeRegion, SphericalMesh, Ray
 
 # Create a composite geometry: inner core + outer core
 inner_core = Ball(radius=1221.5)
@@ -32,6 +33,11 @@ exit = np.array([[-800.0, 500.0, 300.0]])
 ray = Ray(entry, exit)
 distances = geometry.ray_distances(ray.origin, ray.direction)
 # distances shape: (1,)  total distance through inner_core and outer_core
+
+# Switch to a whole-sphere mesh with the same tracing API
+mesh = SphericalMesh(radius=3480.0, radial_resolution=4, lateral_resolution=3)
+mesh_distances = mesh.ray_distances_per_region(ray.origin, ray.direction)
+# mesh_distances shape: (1, n_cells) with radial-major/latitude-major/longitude-major ordering
 ```
 
 ## API
@@ -41,11 +47,19 @@ distances = geometry.ray_distances(ray.origin, ray.direction)
 - `Ball(radius)` - Solid sphere
 - `SphericalShell(radius_inner, radius_outer)` - Spherical shell
 - `Hemisphere(radius, normal, centre=None)` - Hemispherical region
+- `SphericalMesh(radius, radial_resolution, lateral_resolution)` - Whole-sphere mesh
 
 ### CompositeRegion
 
 - `CompositeRegion(regions, labels=None)` - Combine regions
 - `.ray_distances(origin, direction)` - Calculate distances for rays
+
+### SphericalMesh
+
+- `SphericalMesh(radius, radial_resolution, lateral_resolution)` - Whole-sphere mesh
+- `.ray_distances_per_region(origin, direction)` - Flat `(n_rays, n_cells)` distances
+- `.ray_distances(origin, direction)` - Total distance per ray (sum of per-cell distances)
+- `.labels` - One label per mesh cell, ordered radial-major then latitude-major then longitude-major
 
 ### Ray
 

@@ -4,7 +4,10 @@ import numpy as np
 import pytest
 
 from raytracer import Ball, BallInShell, CompositeRegion, Hemisphere, SphericalShell
+from raytracer.intersection import calculate_ray_region_distances
+from raytracer.ray import Ray
 from raytracer.regions import _ray_sphere_intersection
+from raytracer.regions import SphericalMesh
 
 
 class TestRaySphereIntersections:
@@ -323,3 +326,89 @@ class TestBallInShell:
     def test_outer_radius_property(self) -> None:
         """Test that the outer_radius property returns the correct value."""
         assert self.geometry.radius_outer == self.geometry.shell.radius_outer
+
+
+class TestSphericalMesh:
+    """Test suite for the SphericalMesh region."""
+
+    mesh = SphericalMesh(radius=2.0, radial_resolution=2, lateral_resolution=3)
+    reference_ball = Ball(radius=2.0)
+
+    def test__init__(self) -> None:
+        """Test initialisation and label sizing."""
+        with pytest.raises(ValueError):
+            SphericalMesh(radius=-1.0, radial_resolution=2, lateral_resolution=3)
+        with pytest.raises(ValueError):
+            SphericalMesh(radius=2.0, radial_resolution=0, lateral_resolution=3)
+        with pytest.raises(ValueError):
+            SphericalMesh(radius=2.0, radial_resolution=2, lateral_resolution=0)
+
+        assert self.mesh.n_cells == 2 * 3 * 5
+        assert len(self.mesh.labels) == self.mesh.n_cells
+        assert self.mesh.labels[0] == "r0_lat0_lon0"
+        assert self.mesh.labels[-1] == "r1_lat2_lon4"
+
+    def test_contains(self) -> None:
+        """Test whole-sphere containment."""
+        points_inside = np.array([[0.0, 0.0, 0.0], [1.9, 0.1, 0.1]])
+        points_outside = np.array([[2.1, 0.0, 0.0], [3.0, 1.0, 0.0]])
+
+        assert np.all(self.mesh.contains(points_inside))
+        assert not np.any(self.mesh.contains(points_outside))
+
+    def test_ray_distances_shapes_and_sum_consistency(self) -> None:
+        """Test that mesh output matches CompositeRegion-style output shapes."""
+        origins = np.array(
+            [
+                [0.0, 0.0, -5.0],
+                [0.0, 3.0, -5.0],
+                [3.0, 0.0, 0.0],
+            ]
+        )
+        directions = np.array(
+            [
+                [0.0, 0.0, 1.0],
+                [0.0, 0.0, 1.0],
+                [0.0, 0.0, 1.0],
+            ]
+        )
+
+        per_region = self.mesh.ray_distances_per_region(origins, directions)
+        totals = self.mesh.ray_distances(origins, directions)
+
+        assert per_region.shape == (3, self.mesh.n_cells)
+        assert totals.shape == (3,)
+        np.testing.assert_allclose(totals, per_region.sum(axis=1))
+
+    def test_total_distances_match_ball(self) -> None:
+        """Test that total mesh path length matches a full Ball of same radius."""
+        origins = np.array(
+            [
+                [0.0, 0.0, -5.0],
+                [0.0, 0.0, 0.0],
+                [3.0, 0.0, -5.0],
+                [0.0, 1.5, 0.0],
+            ]
+        )
+        directions = np.array(
+            [
+                [0.0, 0.0, 1.0],
+                [1.0, 0.0, 0.0],
+                [0.0, 0.0, 1.0],
+                [1.0, 0.0, 0.0],
+            ]
+        )
+
+        expected = self.reference_ball.ray_distances(origins, directions)
+        actual = self.mesh.ray_distances(origins, directions)
+        np.testing.assert_allclose(actual, expected)
+
+    def test_drop_in_with_calculate_ray_region_distances(self) -> None:
+        """Test SphericalMesh can be passed like CompositeRegion."""
+        entry = np.array([[0.0, 0.0, -5.0]])
+        exit = np.array([[0.0, 0.0, 5.0]])
+        ray = Ray(entry, exit)
+
+        distances = calculate_ray_region_distances(self.mesh, ray)
+        expected = self.reference_ball.ray_distances(ray.origin, ray.direction)
+        np.testing.assert_allclose(distances, expected)

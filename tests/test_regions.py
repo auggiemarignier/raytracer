@@ -6,8 +6,7 @@ import pytest
 from raytracer import Ball, BallInShell, CompositeRegion, Hemisphere, SphericalShell
 from raytracer.intersection import calculate_ray_region_distances
 from raytracer.ray import Ray
-from raytracer.regions import _ray_sphere_intersection
-from raytracer.regions import SphericalMesh
+from raytracer.regions import SphericalMesh, _ray_sphere_intersection
 
 
 class TestRaySphereIntersections:
@@ -331,8 +330,8 @@ class TestBallInShell:
 class TestSphericalMesh:
     """Test suite for the SphericalMesh region."""
 
-    mesh = SphericalMesh(radius=2.0, radial_resolution=2, lateral_resolution=3)
-    reference_ball = Ball(radius=2.0)
+    MESH = SphericalMesh(radius=2.0, radial_resolution=2, lateral_resolution=3)
+    REFERENCE_BALL = Ball(radius=2.0)
 
     def test__init__(self) -> None:
         """Test initialisation and label sizing."""
@@ -343,18 +342,22 @@ class TestSphericalMesh:
         with pytest.raises(ValueError):
             SphericalMesh(radius=2.0, radial_resolution=2, lateral_resolution=0)
 
-        assert self.mesh.n_cells == 2 * 3 * 5
-        assert len(self.mesh.labels) == self.mesh.n_cells
-        assert self.mesh.labels[0] == "r0_lat0_lon0"
-        assert self.mesh.labels[-1] == "r1_lat2_lon4"
+        assert self.MESH.n_cells == (
+            self.MESH.radial_resolution
+            * self.MESH.lateral_resolution
+            * (2 * self.MESH.lateral_resolution - 1)
+        )
+        assert len(self.MESH.labels) == self.MESH.n_cells
+        assert self.MESH.labels[0] == "r0_lat0_lon0"
+        assert self.MESH.labels[-1] == "r1_lat2_lon4"
 
     def test_contains(self) -> None:
         """Test whole-sphere containment."""
         points_inside = np.array([[0.0, 0.0, 0.0], [1.9, 0.1, 0.1]])
         points_outside = np.array([[2.1, 0.0, 0.0], [3.0, 1.0, 0.0]])
 
-        assert np.all(self.mesh.contains(points_inside))
-        assert not np.any(self.mesh.contains(points_outside))
+        assert np.all(self.MESH.contains(points_inside))
+        assert not np.any(self.MESH.contains(points_outside))
 
     def test_ray_distances_shapes_and_sum_consistency(self) -> None:
         """Test that mesh output matches CompositeRegion-style output shapes."""
@@ -373,10 +376,10 @@ class TestSphericalMesh:
             ]
         )
 
-        per_region = self.mesh.ray_distances_per_region(origins, directions)
-        totals = self.mesh.ray_distances(origins, directions)
+        per_region = self.MESH.ray_distances_per_region(origins, directions)
+        totals = self.MESH.ray_distances(origins, directions)
 
-        assert per_region.shape == (3, self.mesh.n_cells)
+        assert per_region.shape == (3, self.MESH.n_cells)
         assert totals.shape == (3,)
         np.testing.assert_allclose(totals, per_region.sum(axis=1))
 
@@ -399,8 +402,8 @@ class TestSphericalMesh:
             ]
         )
 
-        expected = self.reference_ball.ray_distances(origins, directions)
-        actual = self.mesh.ray_distances(origins, directions)
+        expected = self.REFERENCE_BALL.ray_distances(origins, directions)
+        actual = self.MESH.ray_distances(origins, directions)
         np.testing.assert_allclose(actual, expected)
 
     def test_drop_in_with_calculate_ray_region_distances(self) -> None:
@@ -409,6 +412,6 @@ class TestSphericalMesh:
         exit = np.array([[0.0, 0.0, 5.0]])
         ray = Ray(entry, exit)
 
-        distances = calculate_ray_region_distances(self.mesh, ray)
-        expected = self.reference_ball.ray_distances(ray.origin, ray.direction)
+        distances = calculate_ray_region_distances(self.MESH, ray)
+        expected = self.REFERENCE_BALL.ray_distances(ray.origin, ray.direction)
         np.testing.assert_allclose(distances, expected)

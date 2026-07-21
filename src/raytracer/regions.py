@@ -332,9 +332,9 @@ class SphericalMesh(Region):
         if radius <= 0:
             raise ValueError("Radius must be positive")
         if not isinstance(radial_resolution, int) or radial_resolution <= 0:
-            raise ValueError("radial_resolution must be a positive integer")
+            raise ValueError("Radial resolution must be a positive integer")
         if not isinstance(lateral_resolution, int) or lateral_resolution <= 0:
-            raise ValueError("lateral_resolution must be a positive integer")
+            raise ValueError("Lateral resolution must be a positive integer")
 
         self.radius = radius
         self.radial_resolution = radial_resolution
@@ -418,7 +418,9 @@ class SphericalMesh(Region):
             t_candidates.extend(
                 t
                 for t in t_inner
-                if np.isfinite(t) and (t_entry + self._tolerance) < t < (t_exit - self._tolerance)
+                if np.isfinite(t)
+                and t > (t_entry + self._tolerance)
+                and t < (t_exit - self._tolerance)
             )
 
         for theta in self.theta_edges[1:-1]:
@@ -429,7 +431,9 @@ class SphericalMesh(Region):
                 if np.isfinite(t) and (t_entry + self._tolerance) < t < (t_exit - self._tolerance)
             )
 
-        phi_boundaries = (np.arange(self.n_lon) + 0.5) * self.phi_step
+        phi_boundaries = np.mod(
+            np.arange(self.n_lon) * self.phi_step + self.phi_offset, 2 * np.pi
+        )
         for phi in phi_boundaries:
             t_phi = _ray_longitude_plane_intersection(origin, direction, phi)
             if (
@@ -472,8 +476,8 @@ class SphericalMesh(Region):
         lat_index = np.searchsorted(self.theta_edges, theta, side="right") - 1
         lat_index = int(np.clip(lat_index, 0, self.n_lat - 1))
 
-        phi_shifted = np.mod(phi + self.phi_offset, 2 * np.pi)
-        lon_index = int(np.floor(phi_shifted / self.phi_step))
+        phi_adjusted = np.mod(phi + self.phi_offset, 2 * np.pi)
+        lon_index = int(np.floor(phi_adjusted / self.phi_step))
         lon_index = int(np.clip(lon_index, 0, self.n_lon - 1))
 
         return (radial_index * self.n_lat + lat_index) * self.n_lon + lon_index
@@ -559,10 +563,18 @@ def _ray_sphere_intersection(
 def _mcewen_wiaux_grid(
     lateral_resolution: int,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, float, float]:
-    """Generate McEwen-Wiaux latitude/longitude sample locations and indexing aids."""
+    """Generate McEwen-Wiaux angular samples and indexing aids.
+
+    Notes
+    -----
+    Uses ``n_lat = L`` and ``n_lon = 2L - 1`` for band-limit ``L``
+    following the McEwen-Wiaux equiangular sampling convention, where
+    ``L`` is the ``lateral_resolution`` parameter.
+    """
     n_lat = lateral_resolution
     n_lon = 2 * lateral_resolution - 1
 
+    # McEwen-Wiaux-style equiangular colatitude samples (adapted dependency-free form).
     theta_centres = np.pi * (2 * np.arange(n_lat) + 1) / (2 * n_lat - 1)
     theta_edges = np.empty(n_lat + 1)
     theta_edges[0] = 0.0
@@ -582,18 +594,28 @@ def _ray_cone_intersections(
     direction: np.ndarray,
     theta: float,
 ) -> np.ndarray:
-    """Find intersections between a line and a cone of constant colatitude."""
+    """Find intersections between a line and a cone of constant colatitude.
+
+    Returns
+    -------
+    ndarray, shape (2,)
+        Up to two intersection parameters. Missing solutions are returned
+        as ``np.nan`` so downstream finite-value filtering can be applied
+        uniformly across quadratic and degenerate cases.
+    """
     x0, y0, z0 = origin
     dx, dy, dz = direction
 
     cos_theta = np.cos(theta)
     sin_theta = np.sin(theta)
-    cos2 = cos_theta**2
-    sin2 = sin_theta**2
+    cos_theta_squared = cos_theta**2
+    sin_theta_squared = sin_theta**2
 
-    a = (dx**2 + dy**2) * cos2 - (dz**2) * sin2
-    b = 2 * ((x0 * dx + y0 * dy) * cos2 - (z0 * dz) * sin2)
-    c = (x0**2 + y0**2) * cos2 - (z0**2) * sin2
+    a = (dx**2 + dy**2) * cos_theta_squared - dz**2 * sin_theta_squared
+    b = 2 * (
+        (x0 * dx + y0 * dy) * cos_theta_squared - (z0 * dz) * sin_theta_squared
+    )
+    c = (x0**2 + y0**2) * cos_theta_squared - (z0**2) * sin_theta_squared
 
     if np.isclose(a, 0.0):
         if np.isclose(b, 0.0):
@@ -616,6 +638,7 @@ def _ray_longitude_plane_intersection(
     longitude: float,
 ) -> float:
     """Find intersection between a line and a plane at constant longitude."""
+    # Plane normal perpendicular to the half-plane at azimuth ``longitude``.
     normal = np.array([np.sin(longitude), -np.cos(longitude), 0.0])
     denom = np.dot(normal, direction)
     if np.isclose(denom, 0.0):
@@ -625,13 +648,13 @@ def _ray_longitude_plane_intersection(
 
 def _sorted_unique_parameters(t_values: list[float], tolerance: float) -> np.ndarray:
     """Sort and deduplicate parameter values with a tolerance."""
-    values = np.sort(np.asarray(t_values, dtype=float))
-    values = values[np.isfinite(values)]
-    if values.size == 0:
-        return values
+    sorted_values = np.sort(np.asarray(t_values, dtype=float))
+    finite_values = sorted_values[np.isfinite(sorted_values)]
+    if finite_values.size == 0:
+        return finite_values
 
-    unique_values = [values[0]]
-    for value in values[1:]:
+    unique_values = [finite_values[0]]
+    for value in finite_values[1:]:
         if np.abs(value - unique_values[-1]) > tolerance:
             unique_values.append(value)
 

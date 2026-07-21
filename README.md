@@ -37,7 +37,7 @@ distances = geometry.ray_distances(ray.origin, ray.direction)
 # Switch to a whole-sphere mesh with the same tracing API
 mesh = SphericalMesh(radius=3480.0, radial_resolution=4, lateral_resolution=3)
 mesh_distances = mesh.ray_distances_per_region(ray.origin, ray.direction)
-# mesh_distances shape: (1, n_cells) with radial-major/latitude-major/longitude-major ordering
+# mesh_distances shape: (1, n_cells) with radial-major, latitude-major, longitude-major ordering
 ```
 
 ## API

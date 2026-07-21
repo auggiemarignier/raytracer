@@ -8,6 +8,7 @@ from raytracer.regions import (
     CompositeRegion,
     Hemisphere,
     Region,
+    SphericalMesh,
     SphericalShell,
 )
 
@@ -19,5 +20,6 @@ __all__ = [
     "Ball",
     "BallInShell",
     "CompositeRegion",
+    "SphericalMesh",
     "calculate_ray_region_distances",
 ]

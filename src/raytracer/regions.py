@@ -303,6 +303,186 @@ class CompositeRegion(Region):
         return distances.sum(axis=1)
 
 
+class SphericalMesh(Region):
+    """A whole-sphere mesh with radial and McEwen-Wiaux lateral sampling.
+
+    Parameters
+    ----------
+    radius : float
+        Radius of the sphere.
+    radial_resolution : int
+        Number of radial cells between 0 and ``radius``.
+    lateral_resolution : int
+        McEwen-Wiaux band-limit for lateral sampling.
+        The mesh uses ``n_lat = lateral_resolution`` latitude cells and
+        ``n_lon = 2 * lateral_resolution - 1`` longitude cells.
+
+    Notes
+    -----
+    Cell ordering (and therefore ``labels`` and ``ray_distances_per_region`` columns)
+    is radial-major, then latitude-major, then longitude-major.
+    """
+
+    def __init__(
+        self,
+        radius: float,
+        radial_resolution: int,
+        lateral_resolution: int,
+    ):
+        if radius <= 0:
+            raise ValueError("Radius must be positive")
+        if not isinstance(radial_resolution, int) or radial_resolution <= 0:
+            raise ValueError("Radial resolution must be a positive integer")
+        if not isinstance(lateral_resolution, int) or lateral_resolution <= 0:
+            raise ValueError("Lateral resolution must be a positive integer")
+
+        self.radius = radius
+        self.radial_resolution = radial_resolution
+        self.lateral_resolution = lateral_resolution
+
+        self.radial_edges = np.linspace(0.0, self.radius, self.radial_resolution + 1)
+        (
+            self.theta_centres,
+            self.theta_edges,
+            self.phi_centres,
+            self.phi_step,
+            self.phi_offset,
+        ) = _mcewen_wiaux_grid(self.lateral_resolution)
+
+        self.n_radial = self.radial_resolution
+        self.n_lat = self.lateral_resolution
+        self.n_lon = 2 * self.lateral_resolution - 1
+        self.n_cells = self.n_radial * self.n_lat * self.n_lon
+
+        self.labels = [
+            f"r{radial}_lat{lat}_lon{lon}"
+            for radial in range(self.n_radial)
+            for lat in range(self.n_lat)
+            for lon in range(self.n_lon)
+        ]
+
+        self._tolerance = 1e-10
+
+    def contains(self, point: np.ndarray) -> np.ndarray:
+        """Check if point(s) are inside the whole sphere."""
+        r = np.linalg.norm(point, axis=-1)
+        return r <= self.radius
+
+    def ray_distances_per_region(
+        self, origin: np.ndarray, direction: np.ndarray
+    ) -> np.ndarray:
+        """Calculate distances through each mesh cell separately."""
+        origin = np.atleast_2d(np.asarray(origin))
+        direction = np.atleast_2d(np.asarray(direction))
+
+        if origin.shape != direction.shape:
+            raise ValueError("origin and direction must have matching shapes")
+        if origin.shape[-1] != 3:
+            raise ValueError("origin and direction must have shape (..., 3)")
+
+        n_rays = origin.shape[0]
+        distances = np.zeros((n_rays, self.n_cells))
+
+        for i in range(n_rays):
+            distances[i] = self._ray_distances_single(origin[i], direction[i])
+
+        return distances
+
+    def ray_distances(self, origin: np.ndarray, direction: np.ndarray) -> np.ndarray:
+        """Calculate total distance through the spherical mesh."""
+        distances = self.ray_distances_per_region(origin, direction)
+        return distances.sum(axis=1)
+
+    def _ray_distances_single(
+        self, origin: np.ndarray, direction: np.ndarray
+    ) -> np.ndarray:
+        """Calculate per-cell distances for a single ray."""
+        distances = np.zeros(self.n_cells)
+
+        t_outer = _ray_sphere_intersection(
+            origin[np.newaxis, :], direction[np.newaxis, :], self.radius
+        )[0]
+        if not np.all(np.isfinite(t_outer)):
+            return distances
+
+        t_entry, t_exit = np.sort(t_outer)
+        if np.abs(t_exit - t_entry) <= self._tolerance:
+            return distances
+
+        t_candidates = [t_entry, t_exit]
+
+        for radius in self.radial_edges[1:-1]:
+            t_inner = _ray_sphere_intersection(
+                origin[np.newaxis, :], direction[np.newaxis, :], radius
+            )[0]
+            t_candidates.extend(
+                t
+                for t in t_inner
+                if np.isfinite(t)
+                and t > (t_entry + self._tolerance)
+                and t < (t_exit - self._tolerance)
+            )
+
+        for theta in self.theta_edges[1:-1]:
+            t_theta = _ray_cone_intersections(origin, direction, theta)
+            t_candidates.extend(
+                t
+                for t in t_theta
+                if np.isfinite(t) and (t_entry + self._tolerance) < t < (t_exit - self._tolerance)
+            )
+
+        phi_boundaries = np.mod(
+            np.arange(self.n_lon) * self.phi_step + self.phi_offset, 2 * np.pi
+        )
+        for phi in phi_boundaries:
+            t_phi = _ray_longitude_plane_intersection(origin, direction, phi)
+            if (
+                np.isfinite(t_phi)
+                and (t_entry + self._tolerance) < t_phi < (t_exit - self._tolerance)
+            ):
+                t_candidates.append(t_phi)
+
+        t_sorted = _sorted_unique_parameters(t_candidates, self._tolerance)
+
+        for t0, t1 in zip(t_sorted[:-1], t_sorted[1:], strict=False):
+            if (t1 - t0) <= self._tolerance:
+                continue
+
+            t_mid = 0.5 * (t0 + t1)
+            point = origin + t_mid * direction
+            if not self.contains(point):
+                continue
+
+            cell_index = self._point_to_cell_index(point)
+            distances[cell_index] += np.abs(t1 - t0)
+
+        return distances
+
+    def _point_to_cell_index(self, point: np.ndarray) -> int:
+        """Map a Cartesian point to a flat mesh-cell index."""
+        x, y, z = point
+        r = np.linalg.norm(point)
+
+        if r <= self._tolerance:
+            theta = 0.0
+            phi = 0.0
+            radial_index = 0
+        else:
+            theta = np.arccos(np.clip(z / r, -1.0, 1.0))
+            phi = np.mod(np.arctan2(y, x), 2 * np.pi)
+            radial_index = np.searchsorted(self.radial_edges, r, side="right") - 1
+            radial_index = int(np.clip(radial_index, 0, self.n_radial - 1))
+
+        lat_index = np.searchsorted(self.theta_edges, theta, side="right") - 1
+        lat_index = int(np.clip(lat_index, 0, self.n_lat - 1))
+
+        phi_adjusted = np.mod(phi + self.phi_offset, 2 * np.pi)
+        lon_index = int(np.floor(phi_adjusted / self.phi_step))
+        lon_index = int(np.clip(lon_index, 0, self.n_lon - 1))
+
+        return (radial_index * self.n_lat + lat_index) * self.n_lon + lon_index
+
+
 class BallInShell(CompositeRegion):
     """A composite region consisting of a ball inside a spherical shell.
 
@@ -378,3 +558,104 @@ def _ray_sphere_intersection(
     # The smallest t in absolute value is the intersection closest to the origin
     # t1 is the most negative.
     return np.stack([t1, t2], axis=-1)
+
+
+def _mcewen_wiaux_grid(
+    lateral_resolution: int,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, float, float]:
+    """Generate McEwen-Wiaux angular samples and indexing aids.
+
+    Notes
+    -----
+    Uses ``n_lat = L`` and ``n_lon = 2L - 1`` for band-limit ``L``
+    following the McEwen-Wiaux equiangular sampling convention, where
+    ``L`` is the ``lateral_resolution`` parameter.
+    """
+    n_lat = lateral_resolution
+    n_lon = 2 * lateral_resolution - 1
+
+    # McEwen-Wiaux-style equiangular colatitude samples (adapted dependency-free form).
+    theta_centres = np.pi * (2 * np.arange(n_lat) + 1) / (2 * n_lat - 1)
+    theta_edges = np.empty(n_lat + 1)
+    theta_edges[0] = 0.0
+    theta_edges[-1] = np.pi
+    if n_lat > 1:
+        theta_edges[1:-1] = 0.5 * (theta_centres[:-1] + theta_centres[1:])
+
+    phi_step = 2 * np.pi / n_lon
+    phi_centres = phi_step * np.arange(n_lon)
+    phi_offset = 0.5 * phi_step
+
+    return theta_centres, theta_edges, phi_centres, phi_step, phi_offset
+
+
+def _ray_cone_intersections(
+    origin: np.ndarray,
+    direction: np.ndarray,
+    theta: float,
+) -> np.ndarray:
+    """Find intersections between a line and a cone of constant colatitude.
+
+    Returns
+    -------
+    ndarray, shape (2,)
+        Up to two intersection parameters. Missing solutions are returned
+        as ``np.nan`` so downstream finite-value filtering can be applied
+        uniformly across quadratic and degenerate cases.
+    """
+    x0, y0, z0 = origin
+    dx, dy, dz = direction
+
+    cos_theta = np.cos(theta)
+    sin_theta = np.sin(theta)
+    cos_theta_squared = cos_theta**2
+    sin_theta_squared = sin_theta**2
+
+    a = (dx**2 + dy**2) * cos_theta_squared - dz**2 * sin_theta_squared
+    b = 2 * (
+        (x0 * dx + y0 * dy) * cos_theta_squared - (z0 * dz) * sin_theta_squared
+    )
+    c = (x0**2 + y0**2) * cos_theta_squared - (z0**2) * sin_theta_squared
+
+    if np.isclose(a, 0.0):
+        if np.isclose(b, 0.0):
+            return np.array([np.nan, np.nan])
+        return np.array([-c / b, np.nan])
+
+    discriminant = b**2 - 4 * a * c
+    if discriminant < 0:
+        return np.array([np.nan, np.nan])
+
+    sqrt_discriminant = np.sqrt(discriminant)
+    t1 = (-b - sqrt_discriminant) / (2 * a)
+    t2 = (-b + sqrt_discriminant) / (2 * a)
+    return np.array([t1, t2])
+
+
+def _ray_longitude_plane_intersection(
+    origin: np.ndarray,
+    direction: np.ndarray,
+    longitude: float,
+) -> float:
+    """Find intersection between a line and a plane at constant longitude."""
+    # Plane normal perpendicular to the half-plane at azimuth ``longitude``.
+    normal = np.array([np.sin(longitude), -np.cos(longitude), 0.0])
+    denom = np.dot(normal, direction)
+    if np.isclose(denom, 0.0):
+        return np.nan
+    return -np.dot(normal, origin) / denom
+
+
+def _sorted_unique_parameters(t_values: list[float], tolerance: float) -> np.ndarray:
+    """Sort and deduplicate parameter values with a tolerance."""
+    sorted_values = np.sort(np.asarray(t_values, dtype=float))
+    finite_values = sorted_values[np.isfinite(sorted_values)]
+    if finite_values.size == 0:
+        return finite_values
+
+    unique_values = [finite_values[0]]
+    for value in finite_values[1:]:
+        if np.abs(value - unique_values[-1]) > tolerance:
+            unique_values.append(value)
+
+    return np.asarray(unique_values)

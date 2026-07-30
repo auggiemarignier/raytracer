@@ -7,6 +7,7 @@ from raytracer import Ball, BallInShell, CompositeRegion, Hemisphere, SphericalS
 from raytracer.intersection import calculate_ray_region_distances
 from raytracer.ray import Ray
 from raytracer.regions import SphericalMesh, _ray_sphere_intersection
+from raytracer.sampling import FibonacciSphericalSampling, MWSphericalSampling
 
 
 class TestRaySphereIntersections:
@@ -330,23 +331,36 @@ class TestBallInShell:
 class TestSphericalMesh:
     """Test suite for the SphericalMesh region."""
 
-    MESH = SphericalMesh(radius=2.0, radial_resolution=2, lateral_resolution=3)
+    MESH = SphericalMesh(
+        radius=2.0,
+        radial_resolution=2,
+        sampling=MWSphericalSampling(lateral_resolution=3),
+    )
     REFERENCE_BALL = Ball(radius=2.0)
 
     def test__init__(self) -> None:
         """Test initialisation and label sizing."""
         with pytest.raises(ValueError):
-            SphericalMesh(radius=-1.0, radial_resolution=2, lateral_resolution=3)
+            SphericalMesh(
+                radius=-1.0,
+                radial_resolution=2,
+                sampling=MWSphericalSampling(3),
+            )
         with pytest.raises(ValueError):
-            SphericalMesh(radius=2.0, radial_resolution=0, lateral_resolution=3)
-        with pytest.raises(ValueError):
-            SphericalMesh(radius=2.0, radial_resolution=2, lateral_resolution=0)
+            SphericalMesh(
+                radius=2.0,
+                radial_resolution=0,
+                sampling=MWSphericalSampling(3),
+            )
+        with pytest.raises(TypeError):
+            SphericalMesh(
+                radius=2.0,
+                radial_resolution=2,
+                sampling=3,  # type: ignore[arg-type]
+            )
 
-        assert self.MESH.n_cells == (
-            self.MESH.radial_resolution
-            * self.MESH.lateral_resolution
-            * (2 * self.MESH.lateral_resolution - 1)
-        )
+        sampling = MWSphericalSampling(3)
+        assert self.MESH.n_cells == self.MESH.radial_resolution * sampling.n_cells
         assert len(self.MESH.labels) == self.MESH.n_cells
         assert self.MESH.labels[0] == "r0_lat0_lon0"
         assert self.MESH.labels[-1] == "r1_lat2_lon4"
@@ -415,3 +429,89 @@ class TestSphericalMesh:
         distances = calculate_ray_region_distances(self.MESH, ray)
         expected = self.REFERENCE_BALL.ray_distances(ray.origin, ray.direction)
         np.testing.assert_allclose(distances, expected)
+
+
+class TestSphericalMeshFibonacci:
+    """Test suite for SphericalMesh with Fibonacci lateral sampling."""
+
+    N_FIBONACCI = 80
+    MESH = SphericalMesh(
+        radius=2.0,
+        radial_resolution=2,
+        sampling=FibonacciSphericalSampling(N_FIBONACCI),
+    )
+    REFERENCE_BALL = Ball(radius=2.0)
+
+    def test__init__(self) -> None:
+        """Test that SphericalMesh accepts a FibonacciSphericalSampling."""
+        assert self.MESH.n_cells == 2 * self.N_FIBONACCI
+        assert len(self.MESH.labels) == self.MESH.n_cells
+        assert self.MESH.labels[0] == "r0_fib0"
+        assert self.MESH.labels[-1] == f"r1_fib{self.N_FIBONACCI - 1}"
+
+    def test_contains(self) -> None:
+        """Test whole-sphere containment."""
+        points_inside = np.array([[0.0, 0.0, 0.0], [1.9, 0.1, 0.1]])
+        points_outside = np.array([[2.1, 0.0, 0.0], [3.0, 1.0, 0.0]])
+
+        assert np.all(self.MESH.contains(points_inside))
+        assert not np.any(self.MESH.contains(points_outside))
+
+    def test_ray_distances_shapes_and_sum_consistency(self) -> None:
+        """Test that per-region distances sum to total distances."""
+        origins = np.array(
+            [
+                [0.0, 0.0, -5.0],
+                [0.0, 3.0, -5.0],
+                [3.0, 0.0, 0.0],
+            ]
+        )
+        directions = np.array(
+            [
+                [0.0, 0.0, 1.0],
+                [0.0, 0.0, 1.0],
+                [0.0, 0.0, 1.0],
+            ]
+        )
+
+        per_region = self.MESH.ray_distances_per_region(origins, directions)
+        totals = self.MESH.ray_distances(origins, directions)
+
+        assert per_region.shape == (3, self.MESH.n_cells)
+        assert totals.shape == (3,)
+        np.testing.assert_allclose(totals, per_region.sum(axis=1))
+
+    def test_total_distances_approximately_match_ball(self) -> None:
+        """Test that Fibonacci mesh total path lengths are close to a Ball.
+
+        Fibonacci uses dense *t*-sampling so the result is approximate;
+        the tolerance is set to 1 % of the ball diameter.
+        """
+        origins = np.array(
+            [
+                [0.0, 0.0, -5.0],
+                [0.0, 0.0, 0.0],
+                [3.0, 0.0, -5.0],
+                [0.0, 1.5, 0.0],
+            ]
+        )
+        directions = np.array(
+            [
+                [0.0, 0.0, 1.0],
+                [1.0, 0.0, 0.0],
+                [0.0, 0.0, 1.0],
+                [1.0, 0.0, 0.0],
+            ]
+        )
+
+        expected = self.REFERENCE_BALL.ray_distances(origins, directions)
+        actual = self.MESH.ray_distances(origins, directions)
+        # Allow up to 1 % of the sphere diameter (0.04 for radius=2)
+        np.testing.assert_allclose(actual, expected, atol=2 * self.MESH.radius * 0.01)
+
+    def test_miss_returns_zero(self) -> None:
+        """Test that a ray missing the sphere returns zero distance."""
+        origins = np.array([[3.0, 0.0, -5.0]])
+        directions = np.array([[0.0, 0.0, 1.0]])
+        actual = self.MESH.ray_distances(origins, directions)
+        np.testing.assert_allclose(actual, [0.0])

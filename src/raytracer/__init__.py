@@ -11,6 +11,11 @@ from raytracer.regions import (
     SphericalMesh,
     SphericalShell,
 )
+from raytracer.sampling import (
+    FibonacciSphericalSampling,
+    MWSphericalSampling,
+    SphericalSamplingTheorem,
+)
 
 __all__ = [
     "Ray",
@@ -21,5 +26,8 @@ __all__ = [
     "BallInShell",
     "CompositeRegion",
     "SphericalMesh",
+    "SphericalSamplingTheorem",
+    "MWSphericalSampling",
+    "FibonacciSphericalSampling",
     "calculate_ray_region_distances",
 ]

@@ -62,15 +62,8 @@ def _unique_sorted(arr: np.ndarray, n: int, tol: float) -> int:
     if n == 0:
         return 0
 
-    # simple insertion sort for small n
-    for i in range(1, n):
-        key = arr[i]
-        j = i - 1
-        while j >= 0 and arr[j] > key:
-            arr[j + 1] = arr[j]
-            j -= 1
-        arr[j + 1] = key
-
+    # Use an in-place sort; this scales better than O(n^2) insertion sort.
+    arr[:n].sort()
     # compact unique values into front of array
     out_count = 1
     last = arr[0]

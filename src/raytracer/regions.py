@@ -4,7 +4,9 @@ from abc import ABC, abstractmethod
 
 import numpy as np
 
-from raytracer.sampling import SphericalSamplingTheorem
+from raytracer.sampling import FibonacciSphericalSampling, SphericalSamplingTheorem
+
+from ._numba_tracing import ray_distances_batch_fibonacci
 
 
 class Region(ABC):
@@ -392,11 +394,30 @@ class SphericalMesh(Region):
         if origin.shape[-1] != 3:
             raise ValueError("origin and direction must have shape (..., 3)")
 
-        n_rays = origin.shape[0]
-        distances = np.zeros((n_rays, self.n_cells))
+        if isinstance(self.sampling, FibonacciSphericalSampling):
+            # resolve n_samples to a concrete int (sampling may store None)
+            n_samples = (
+                self.sampling._n_ray_samples
+                if self.sampling._n_ray_samples is not None
+                else max(4 * self.sampling.n_cells, 100)
+            )
 
-        for i in range(n_rays):
-            distances[i] = self._ray_distances_single(origin[i], direction[i])
+            distances = ray_distances_batch_fibonacci(
+                origin,
+                direction,
+                self.radial_edges,
+                self.radius,
+                self.n_radial,
+                self.sampling._unit_vectors,
+                n_samples,
+                self._tolerance,
+            )
+        else:
+            n_rays = origin.shape[0]
+            distances = np.zeros((n_rays, self.n_cells))
+
+            for i in range(n_rays):
+                distances[i] = self._ray_distances_single(origin[i], direction[i])
 
         return distances
 

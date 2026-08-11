@@ -25,6 +25,7 @@ def _import_nb_tracing_plain():
         del sys.modules["raytracer._numba_tracing"]
 
     # Provide a minimal fake numba module
+    prev_numba = sys.modules.get("numba")
     fake = types.ModuleType("numba")
 
     def njit(*args, **kwargs):
@@ -42,10 +43,14 @@ def _import_nb_tracing_plain():
     fake.prange = range
     sys.modules["numba"] = fake
 
-    mod = importlib.import_module("raytracer._numba_tracing")
+    try:
+        mod = importlib.import_module("raytracer._numba_tracing")
+    finally:
+        if prev_numba is None:
+            sys.modules.pop("numba", None)
+        else:
+            sys.modules["numba"] = prev_numba
 
-    # clean up the fake module so other imports behave normally
-    del sys.modules["numba"]
     return mod
 
 

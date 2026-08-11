@@ -4,7 +4,7 @@ from numba import njit, prange
 
 @njit
 def _argmax_dot(unit_vectors: np.ndarray, ux: float, uy: float, uz: float):
-    """Find the index of the unit vector in unit_vectors that is most parallel to (ux, uy, uv)."""
+    """Find the index of the unit vector in unit_vectors that is most parallel to (ux, uy, uz)."""
     best = 0
     best_val = -1e308
     for i in range(unit_vectors.shape[0]):

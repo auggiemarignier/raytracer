@@ -103,10 +103,8 @@ def _compute_t_entry_exit(
     t_entry = t1 if t1 <= t2 else t2
     t_exit = t2 if t1 <= t2 else t1
 
-    # only consider forward-facing intersections (t > 0)
-    if t_exit <= tol:
-        return np.nan, np.nan, False
-
+    # Note: `raytracer.regions.SphericalMesh` treats (origin, direction) as an infinite line,
+    # so intersections with negative t are still valid here.
     # do not clamp entry: allow negative t_entry for origins inside the sphere
 
     if np.abs(t_exit - t_entry) <= tol:

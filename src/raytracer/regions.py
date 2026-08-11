@@ -410,7 +410,7 @@ class SphericalMesh(Region):
                 self.n_radial,
                 self.sampling._unit_vectors,
                 n_samples,
-                1e-9,
+                self._tolerance,
             )
         else:
             n_rays = origin.shape[0]

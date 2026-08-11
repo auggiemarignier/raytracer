@@ -211,10 +211,9 @@ def test_ray_distances_single_fibonacci_cell_assignment():
 def test_ray_distances_single_fibonacci_no_intersection():
     """When a ray misses the sphere the output buffer remains all zeros."""
     nb = _import_nb_tracing_plain()
-    # Ray pointing away from sphere
+    # Line at x=2 parallel to the y-axis misses the unit sphere
     ox, oy, oz = 2.0, 0.0, 0.0
-    dx, dy, dz = 1.0, 0.0, 0.0
-
+    dx, dy, dz = 0.0, 1.0, 0.0
     radial_edges = np.array([0.0, 0.5, 1.0])
     radius = 1.0
     n_radial = 2

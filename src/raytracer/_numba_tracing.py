@@ -2,7 +2,7 @@ import numpy as np
 from numba import njit, prange
 
 
-@njit
+@njit(cache=True)
 def _argmax_dot(unit_vectors: np.ndarray, ux: float, uy: float, uz: float):
     """Find the index of the unit vector in unit_vectors that is most parallel to (ux, uy, uz)."""
     best = 0
@@ -16,7 +16,7 @@ def _argmax_dot(unit_vectors: np.ndarray, ux: float, uy: float, uz: float):
     return best
 
 
-@njit
+@njit(cache=True)
 def _ray_sphere_intersection_single(
     ox: float, oy: float, oz: float, dx: float, dy: float, dz: float, radius: float
 ) -> tuple[float, float]:
@@ -51,7 +51,7 @@ def _ray_sphere_intersection_single(
     return t1, t2
 
 
-@njit
+@njit(cache=True)
 def _unique_sorted(arr: np.ndarray, n: int, tol: float) -> int:
     """Sort the first `n` elements of `arr` in-place and remove duplicates.
 
@@ -76,7 +76,7 @@ def _unique_sorted(arr: np.ndarray, n: int, tol: float) -> int:
     return out_count
 
 
-@njit
+@njit(cache=True)
 def _compute_t_entry_exit(
     ox: float,
     oy: float,
@@ -106,7 +106,7 @@ def _compute_t_entry_exit(
     return t_entry, t_exit, True
 
 
-@njit
+@njit(cache=True)
 def _ray_distances_single_fibonacci(
     ox: float,
     oy: float,
@@ -212,7 +212,7 @@ def _ray_distances_single_fibonacci(
     return
 
 
-@njit(parallel=True)
+@njit(parallel=True, cache=True)
 def ray_distances_batch_fibonacci(
     origins: np.ndarray,
     directions: np.ndarray,

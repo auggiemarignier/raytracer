@@ -10,6 +10,7 @@ import sys
 import types
 
 import numpy as np
+import pytest
 
 from raytracer.sampling import FibonacciSphericalSampling
 
@@ -52,6 +53,13 @@ def _import_nb_tracing_plain():
             sys.modules["numba"] = prev_numba
 
     return mod
+
+
+def _import_nb_tracing_numba():
+    """Import the module with the real `numba` implementation."""
+    pytest.importorskip("numba")
+    sys.modules.pop("raytracer._numba_tracing", None)
+    return importlib.import_module("raytracer._numba_tracing")
 
 
 def test_ray_sphere_intersection_single_simple():
@@ -285,3 +293,45 @@ def test_ray_distances_single_fibonacci_central_split():
 
     # nearest lateral to +x should receive some non-zero mass
     assert per_lateral[lateral_index] > 0.0
+
+
+def test_numba_dispatchers_enable_disk_cache():
+    """Compiled tracing dispatchers configure Numba's disk cache."""
+    nb = _import_nb_tracing_numba()
+
+    for name in (
+        "_argmax_dot",
+        "_ray_sphere_intersection_single",
+        "_unique_sorted",
+        "_compute_t_entry_exit",
+        "_ray_distances_single_fibonacci",
+        "ray_distances_batch_fibonacci",
+    ):
+        dispatcher = getattr(nb, name)
+        assert dispatcher._cache is not None
+        assert dispatcher._cache.__class__.__name__ != "NullCache"
+
+
+def test_numba_batch_smoke_compiles_and_traces():
+    """Real-Numba batch tracing compiles and preserves the expected distances."""
+    nb = _import_nb_tracing_numba()
+
+    origins = np.array([[-2.0, 0.0, 0.0], [0.0, 0.0, 2.0]])
+    directions = np.array([[1.0, 0.0, 0.0], [0.0, 0.0, -1.0]])
+    radial_edges = np.array([0.0, 0.5, 1.0])
+    fib = FibonacciSphericalSampling(n_points=8, n_ray_samples=0)
+
+    out = nb.ray_distances_batch_fibonacci(
+        origins,
+        directions,
+        radial_edges,
+        1.0,
+        2,
+        fib._unit_vectors,
+        4,
+        1e-9,
+    )
+
+    assert nb.ray_distances_batch_fibonacci.signatures
+    assert out.shape == (2, 2 * fib._unit_vectors.shape[0])
+    assert np.allclose(out.sum(axis=1), np.array([2.0, 2.0]), atol=1e-8)
